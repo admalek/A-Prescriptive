@@ -1,5 +1,5 @@
 """Command line interface: doctor, machine, simulate, ingest, ingest-events, data summary,
-quality, clean, features, import-xlsx, xlsx-template."""
+quality, clean, features, import-xlsx, xlsx-template, diagnose, experiment-diagnosis."""
 
 from pathlib import Path
 
@@ -24,6 +24,7 @@ from .data import (
     write_template,
 )
 from .doctor import run_checks
+from .eval import RunError, run_diagnosis_experiment
 from .gateway import SimConfig, write_simulation
 from .gateway import simulate as run_simulation
 from .machines import (
@@ -35,6 +36,7 @@ from .machines import (
     machine_dir,
 )
 from .storage import DuckDBStorage
+from .tools import METHODS, DiagnosisError, diagnose, to_anomaly_report
 
 app = typer.Typer(
     help="Universal local multi-agent system for machine diagnostics.",
@@ -455,3 +457,107 @@ def features(
         spike_window=spike_window, spike_threshold=spike_threshold, max_interp=max_interp,
         features=True, window_s=window_s, stride_s=stride_s, min_valid_frac=min_valid_frac,
     )  # fmt: skip
+
+
+# --- diagnosis (K4) ---------------------------------------------------------------------------
+
+
+def _features_for(settings, machine_id: str, window_s: float, stride_s: float):
+    """Window features recomputed from the stored readings (same snapshot as the failures)."""
+    profile = load_machine(settings, machine_id)
+    storage = DuckDBStorage(settings.db_path)
+    try:
+        prepared = prepare(
+            storage, profile, with_features=True, window_s=window_s, stride_s=stride_s
+        )
+    except Exception:
+        storage.close()
+        raise
+    return profile, storage, prepared.features
+
+
+@app.command("diagnose")
+def diagnose_command(
+    machine_id: str = typer.Argument(...),
+    method: str = typer.Option("iforest", help=f"One of: {', '.join(METHODS)}"),
+    exclude_sensor: list[str] = typer.Option(
+        None, "--exclude-sensor", help="Sensor to leave out, e.g. a load sensor (repeatable)"
+    ),
+    reference_frac: float = typer.Option(0.25, help="Healthy start of each segment, as a fraction"),
+    window_s: float = typer.Option(3600.0, help="Feature window length in seconds"),
+    stride_s: float = typer.Option(600.0, help="Step between windows in seconds"),
+    seed: int = typer.Option(42),
+) -> None:
+    """Find anomalous periods and the sensors behind them (needs imported data)."""
+    settings = load_settings()
+    try:
+        profile, storage, features = _features_for(settings, machine_id, window_s, stride_s)
+        with storage:
+            result = diagnose(
+                features,
+                method=method,
+                exclude_sensors=tuple(exclude_sensor or ()),
+                reference_frac=reference_frac,
+                seed=seed,
+            )
+    except (MachineError, FrameError, FeatureError, DiagnosisError) as exc:
+        raise _fail(exc) from exc
+    report = to_anomaly_report(result, machine_id)
+    out = machine_dir(settings, machine_id) / "processed"
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"diagnosis_{method}.json"
+    path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    typer.echo(
+        f"Diagnosis of {machine_id} ({method}): {len(result.episodes)} alarm episodes in "
+        f"{result.monitored_hours:.0f} h monitored (threshold {result.threshold:.2f})"
+    )
+    if result.skipped_segments:
+        typer.echo(f"  segments too short to diagnose: {result.skipped_segments}")
+    for ep in result.episodes:
+        drivers = "; ".join(f"{sensor} {stat} {z:+.1f}" for sensor, stat, z, _ in ep.drivers[:3])
+        typer.echo(
+            f"  detected {ep.detected_at:%Y-%m-%d %H:%M}  to {ep.end:%Y-%m-%d %H:%M}  "
+            f"({ep.n_windows} windows)  {drivers}"
+        )
+    typer.echo(f"Saved: {path}")
+
+
+@app.command("experiment-diagnosis")
+def experiment_diagnosis(
+    machine_id: str = typer.Argument(...),
+    horizon_h: float = typer.Option(
+        72.0, help="An alarm counts if it comes this long before a failure"
+    ),
+    exclude_sensor: list[str] = typer.Option(None, "--exclude-sensor"),
+    seed: int = typer.Option(42),
+    name: str = typer.Option("diagnosis", help="Run name (letters, digits, - and _)"),
+) -> None:
+    """Compare the diagnosis methods against the known failures; stores a reproducible run."""
+    settings = load_settings()
+    try:
+        profile, storage, features = _features_for(settings, machine_id, 3600.0, 600.0)
+        with storage:
+            run, scores = run_diagnosis_experiment(
+                settings,
+                storage,
+                profile,
+                features,
+                horizon_h=horizon_h,
+                seed=seed,
+                diagnose_options={"exclude_sensors": tuple(exclude_sensor or ())},
+                name=name,
+            )
+    except (MachineError, FrameError, FeatureError, DiagnosisError, RunError) as exc:
+        raise _fail(exc) from exc
+    typer.echo(f"Run {run.manifest.run_id} (seed {seed}, alarm horizon {horizon_h:g} h)")
+    typer.echo(
+        f"{'method':<10}{'detected':>10}{'median lead':>13}{'false alarms':>14}{'per 100 h':>11}"
+    )
+    for sc in scores:
+        lead = f"{sc.median_lead_h:.1f} h" if sc.median_lead_h is not None else "-"
+        rate = f"{sc.false_alarms_per_100h:.2f}" if sc.false_alarms_per_100h is not None else "-"
+        typer.echo(
+            f"{sc.method:<10}{f'{sc.detected}/{sc.failures}':>10}{lead:>13}"
+            f"{sc.false_alarms:>14}{rate:>11}"
+        )
+    typer.echo(f"Saved in {run.path}")

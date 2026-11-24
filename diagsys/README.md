@@ -121,6 +121,23 @@ kurtosis` (kolumny `<czujnik>__<cecha>`), plus `window_start`, `window_end`, `se
 `n_points`, `valid_frac`. Okno nigdy nie przechodzi przez lukę i jest podpisane czasem ostatniego
 odczytu (bez patrzenia w przyszłość). Okno z mniej niż 80% ważnych odczytów czujnika ma dla niego NaN.
 
+## Diagnoza (K4)
+
+```bash
+uv run diagsys diagnose press-01 --method iforest --exclude-sensor load_pct
+uv run diagsys experiment-diagnosis press-01 --exclude-sensor load_pct   # porównanie z awariami
+```
+
+`diagnose` liczy cechy okienkowe z zapisanych odczytów, ocenia okna dwiema metodami
+(`robust_z`: reguła progowa jako punkt odniesienia, `iforest`: Isolation Forest) i podaje epizody
+alarmowe wraz z czujnikami, które je wywołały. Wynik zapisuje jako `processed/diagnosis_<metoda>.json`
+(kontrakt `AnomalyReport`). Założenie: maszyna jest zdrowa na początku każdego ciągłego segmentu
+danych, pierwsze 25% okien to wzorzec odniesienia (opcja `--reference-frac`).
+
+`experiment-diagnosis` porównuje metody z wczytanymi awariami (wyprzedzenie alarmu, fałszywe alarmy)
+i zapisuje powtarzalne uruchomienie w `experiments/`. Wielokrotne ziarna symulatora:
+`uv run python scripts/diagnosis_study.py --seeds 101-110`. Pierwsze wyniki: `docs/wyniki_k4.md`.
+
 ## Struktura
 
 ```
@@ -146,8 +163,8 @@ tests/
 | K2 | Dane syntetyczne, import plików, baza DuckDB | zrobiony |
 | K3 | Walidacja, czyszczenie danych i cechy | zrobiony |
 | A | Import Excela, szkielet powtarzalnych eksperymentów, schemat architektury | zrobiony |
-| K4 | Diagnoza: anomalie i hipotezy przyczyn | następny |
-| K5 | Predykcja (RUL) | |
+| K4 | Diagnoza: anomalie, epizody alarmów, czujniki-sprawcy | zrobiony (hipotezy przyczyn: później) |
+| K5 | Predykcja (RUL) | następny |
 | K6 | Serwer modeli (Bielik) i RAG per maszyna | |
 | K7 | Preskrypcja | |
 | K8 | Orkiestrator, raport, kontrola, interfejs | |
