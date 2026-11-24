@@ -262,7 +262,6 @@ def _warnings(
                 f"{frame.step_s:g} s grid; consider --step-s {q.median_interval_s:g}"
             )
     if gap_count:
-        out.append(
-            f"{gap_count} time gaps with no data from any sensor, {gap_total_us / 3.6e9:.1f} h total"
-        )
+        gap_hours = gap_total_us / 3.6e9
+        out.append(f"{gap_count} time gaps with no data from any sensor, {gap_hours:.1f} h total")
     return out

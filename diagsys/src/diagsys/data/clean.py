@@ -33,7 +33,8 @@ def clean_frame(frame: SensorFrame, flags: np.ndarray, max_interp_points: int = 
             end = st + ln  # first row after the hole
             if ln > max_interp_points or st == 0 or end >= col.size:
                 continue
-            if frame.segment[st - 1] != frame.segment[st] or frame.segment[end] != frame.segment[st]:
+            seg = frame.segment
+            if seg[st - 1] != seg[st] or seg[end] != seg[st]:
                 continue
             col[st:end] = np.linspace(col[st - 1], col[end], ln + 2)[1:-1]
             out_flags[st:end, j] |= FLAG_IMPUTED

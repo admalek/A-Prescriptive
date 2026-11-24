@@ -1,5 +1,5 @@
 """Command line interface: doctor, machine, simulate, ingest, ingest-events, data summary,
-quality, clean, features."""
+quality, clean, features, import-xlsx, xlsx-template."""
 
 from pathlib import Path
 
@@ -15,10 +15,13 @@ from .data import (
     FeatureError,
     FrameError,
     IngestError,
+    XlsxError,
+    import_workbook,
     ingest_events,
     ingest_file,
     prepare,
     write_outputs,
+    write_template,
 )
 from .doctor import run_checks
 from .gateway import SimConfig, write_simulation
@@ -224,6 +227,57 @@ def ingest_events_command(
         f"Imported {report.file}: {report.events_found} events found, "
         f"{report.events_new} new, {report.events_duplicate} already stored"
     )
+
+
+@app.command("xlsx-template")
+def xlsx_template(
+    file: Path = typer.Argument(Path("diagsys_szablon.xlsx"), help="Where to write the template"),
+) -> None:
+    """Write an example Excel workbook (data, machine, sensors, failures, history, context)."""
+    if file.exists():
+        raise _fail(FileExistsError(f"{file} already exists; choose another name"))
+    write_template(file)
+    typer.echo(f"Wrote template: {file}")
+    typer.echo(f"Fill it in, then: diagsys import-xlsx <machine-id> {file} --tz Europe/Warsaw")
+
+
+@app.command("import-xlsx")
+def import_xlsx(
+    machine_id: str = typer.Argument(..., help="Machine id; created from the workbook if new"),
+    file: Path = typer.Argument(..., help="Excel workbook (.xlsx), see: diagsys xlsx-template"),
+    tz: str = typer.Option("UTC", help="Zone of timestamps without an offset, e.g. Europe/Warsaw"),
+) -> None:
+    """Import data, machine description, failure history and context from one Excel file."""
+    settings = load_settings()
+    try:
+        with DuckDBStorage(settings.db_path) as storage:
+            report = import_workbook(settings, storage, machine_id, file, tz=tz)
+    except (MachineError, IngestError, XlsxError) as exc:
+        raise _fail(exc) from exc
+    r = report.readings
+    typer.echo(f"Imported {report.file} into {report.machine_id}")
+    if report.machine_created:
+        typer.echo("  machine created from the workbook")
+    typer.echo(
+        f"  readings: {r.readings_found} found, {r.readings_new} new, "
+        f"{r.readings_duplicate} already stored, {r.readings_rejected} rejected"
+    )
+    typer.echo(f"  sensors:  {', '.join(r.sensors) or '-'}")
+    if r.start and r.end:
+        typer.echo(f"  range (UTC): {r.start:%Y-%m-%d %H:%M} to {r.end:%Y-%m-%d %H:%M}")
+    if report.events is not None:
+        typer.echo(
+            f"  failures: {report.events.events_found} found, {report.events.events_new} new"
+        )
+    if report.sensors_described or report.failure_modes:
+        typer.echo(
+            f"  profile:  {report.sensors_described} sensors and "
+            f"{report.failure_modes} failure modes described"
+        )
+    if report.context_file:
+        typer.echo(f"  context saved to {report.context_file}")
+    for warning in report.warnings:
+        typer.echo(f"  note: {warning}")
 
 
 @data_app.command("summary")

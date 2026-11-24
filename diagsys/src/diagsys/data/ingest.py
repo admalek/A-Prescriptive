@@ -209,7 +209,7 @@ def ingest_events(
     con, rel, ts_col = _open(path, timestamp_col, timestamp_format, decimal, tz)
     types = {name: str(t) for name, t in zip(rel.columns, rel.types, strict=True)}
     ts_expr = _ts_expr(ts_col, types[ts_col], timestamp_format)
-    mode =_resolve(rel.columns, mode_col, "failure mode")
+    mode = _resolve(rel.columns, mode_col, "failure mode")
     description = _resolve(rel.columns, description_col, "description", required=False)
     description_expr = f"coalesce(CAST({_q(description)} AS VARCHAR), '')" if description else "''"
     good = "ts IS NOT NULL AND failure_mode IS NOT NULL AND failure_mode <> ''"

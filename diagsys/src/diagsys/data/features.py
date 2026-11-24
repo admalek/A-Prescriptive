@@ -32,7 +32,10 @@ def window_points(frame: SensorFrame, window_s: float, stride_s: float) -> tuple
 
 
 def compute_features(
-    frame: SensorFrame, *, window_s: float = 3600.0, stride_s: float = 600.0,
+    frame: SensorFrame,
+    *,
+    window_s: float = 3600.0,
+    stride_s: float = 600.0,
     min_valid_frac: float = 0.8,
 ) -> pa.Table:
     length, stride = window_points(frame, window_s, stride_s)
