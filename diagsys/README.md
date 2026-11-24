@@ -66,6 +66,32 @@ Czas jest zapisywany w UTC (znacznik ze strefą, np. `Z` lub `+01:00`, ma pierws
 Puste lub niepoprawne komórki są odrzucane i policzone w raporcie. Nazwy czujników są
 normalizowane (`Temperatura łożyska [°C]` → `temperatura_lozyska_c`) i dopisywane do `profile.yaml`.
 
+## Excel: jeden plik na start (półautomatyczne wejście)
+
+```bash
+uv run diagsys xlsx-template szablon.xlsx            # przykładowy plik ze wszystkimi arkuszami
+uv run diagsys import-xlsx pompa-01 szablon.xlsx --tz Europe/Warsaw
+```
+
+| Arkusz | Wymagany | Zawartość |
+| --- | --- | --- |
+| `dane` | tak | pierwsza kolumna = czas, każda następna = jeden czujnik (liczby) |
+| `maszyna` | nie | dwie kolumny (parametr, wartość): nazwa, typ, opis, notatki |
+| `czujniki` | nie | id, nazwa, jednostka, min, max (zakres używany przez kontrolę jakości) |
+| `tryby_awarii` | nie | id, nazwa, opis, koszt_przestoju_na_godzine (dla preskrypcji) |
+| `historia` | nie | czas, tryb_awarii, opis (znane awarie) |
+| `kontekst` | nie | wolny tekst, jeden akapit na komórkę kolumny A, zapis do `docs/kontekst.md` |
+
+Nazwy arkuszy mogą być po polsku lub angielsku. Maszyna jest tworzona, jeśli jeszcze nie istnieje.
+Import używa tych samych reguł co CSV (powtórzenie niczego nie dubluje, strefy czasowe, odrzucone
+komórki są liczone). Błędny arkusz nie zmienia niczego w bazie ani w profilu.
+
+## Eksperymenty (powtarzalność)
+
+`diagsys.eval.start_run` tworzy folder `experiments/<run_id>/` maszyny z `manifest.json`: ziarno,
+konfiguracja, odcisk danych, wersje bibliotek i commit. `Run.finish(metrics)` zapisuje metryki.
+Schemat architektury: `docs/architektura.md`.
+
 ## Jakość, czyszczenie, cechy (K3)
 
 ```bash
@@ -119,6 +145,7 @@ tests/
 | K1 | Szkielet, kontrakty, porty, profile maszyn, `doctor` | zrobiony |
 | K2 | Dane syntetyczne, import plików, baza DuckDB | zrobiony |
 | K3 | Walidacja, czyszczenie danych i cechy | zrobiony |
+| A | Import Excela, szkielet powtarzalnych eksperymentów, schemat architektury | zrobiony |
 | K4 | Diagnoza: anomalie i hipotezy przyczyn | następny |
 | K5 | Predykcja (RUL) | |
 | K6 | Serwer modeli (Bielik) i RAG per maszyna | |

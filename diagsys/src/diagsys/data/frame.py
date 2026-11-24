@@ -52,8 +52,14 @@ class SensorFrame:
 
     def with_values(self, values: np.ndarray) -> "SensorFrame":
         return SensorFrame(
-            self.sensors, self.ts, self.segment, values, self.step_us, self.max_gap_us,
-            self.gaps, self.intervals_us,
+            self.sensors,
+            self.ts,
+            self.segment,
+            values,
+            self.step_us,
+            self.max_gap_us,
+            self.gaps,
+            self.intervals_us,
         )
 
 
