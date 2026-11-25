@@ -1,9 +1,13 @@
 """Command line interface: doctor, machine, simulate, ingest, ingest-events, data summary,
-quality, clean, features, import-xlsx, xlsx-template, diagnose, experiment-diagnosis."""
+quality, clean, features, import-xlsx, xlsx-template, diagnose, experiment-diagnosis, predict,
+experiment-prediction."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.compute as pc
 import typer
 import yaml
 
@@ -24,7 +28,7 @@ from .data import (
     write_template,
 )
 from .doctor import run_checks
-from .eval import RunError, run_diagnosis_experiment
+from .eval import RunError, run_diagnosis_experiment, run_prediction_experiment
 from .gateway import SimConfig, write_simulation
 from .gateway import simulate as run_simulation
 from .machines import (
@@ -36,7 +40,17 @@ from .machines import (
     machine_dir,
 )
 from .storage import DuckDBStorage
-from .tools import METHODS, DiagnosisError, diagnose, to_anomaly_report
+from .tools import (
+    METHODS,
+    RUL_METHODS,
+    DiagnosisError,
+    PredictionError,
+    build_dataset,
+    diagnose,
+    fit_model,
+    forecast_latest,
+    to_anomaly_report,
+)
 
 app = typer.Typer(
     help="Universal local multi-agent system for machine diagnostics.",
@@ -559,5 +573,108 @@ def experiment_diagnosis(
         typer.echo(
             f"{sc.method:<10}{f'{sc.detected}/{sc.failures}':>10}{lead:>13}"
             f"{sc.false_alarms:>14}{rate:>11}"
+        )
+    typer.echo(f"Saved in {run.path}")
+
+
+# --- prediction (K5) --------------------------------------------------------------------------
+
+
+def _parse_at(text: str) -> datetime:
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise typer.BadParameter(f"not a date and time: {text!r} (e.g. 2026-03-01T12:00)") from exc
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+@app.command("predict")
+def predict_command(
+    machine_id: str = typer.Argument(...),
+    method: str = typer.Option("quantile_gbm", help=f"One of: {', '.join(RUL_METHODS)}"),
+    horizon_h: float = typer.Option(72.0, help="Horizon of the failure probability, hours"),
+    exclude_sensor: list[str] = typer.Option(None, "--exclude-sensor"),
+    at: str = typer.Option(
+        None,
+        "--at",
+        help="Forecast as of this moment (UTC unless an offset is given), using only data "
+        "and failures up to then: an honest backtest",
+    ),
+    seed: int = typer.Option(42),
+) -> None:
+    """Forecast the remaining useful life from the recorded history and failures."""
+    settings = load_settings()
+    try:
+        as_of = _parse_at(at) if at else None
+        profile, storage, features = _features_for(settings, machine_id, 3600.0, 600.0)
+        with storage:
+            failures = [e.timestamp for e in storage.read_events(machine_id)]
+        if as_of is not None:
+            cutoff = pa.scalar(as_of, pa.timestamp("us", tz="UTC"))
+            features = features.filter(pc.less_equal(features.column("window_end"), cutoff))
+            failures = [f for f in failures if f <= as_of]
+        ds = build_dataset(features, failures, exclude_sensors=tuple(exclude_sensor or ()))
+        model = fit_model(method, ds, seed=seed)
+        result = forecast_latest(model, ds, machine_id, horizon_h=horizon_h)
+    except (MachineError, FrameError, FeatureError, PredictionError) as exc:
+        raise _fail(exc) from exc
+    f = result.forecast
+    typer.echo(f"Forecast for {machine_id} as of {result.as_of:%Y-%m-%d %H:%M} UTC ({method})")
+    typer.echo(f"  time since last repair: {result.age_h:.0f} h")
+    typer.echo(
+        f"  remaining useful life: {f.rul_hours:.0f} h  "
+        f"(80% interval {f.rul_low_hours:.0f} to {f.rul_high_hours:.0f} h)"
+    )
+    typer.echo(
+        f"  probability of failure within {f.horizon_hours:g} h: {f.failure_probability:.0%} "
+        "(approximate)"
+    )
+    typer.echo(
+        f"  trained on {model.n_train_cycles} failure cycles ({model.n_train_windows} windows)"
+    )
+    for warning in result.warnings:
+        typer.echo(f"  WARNING: {warning}")
+    out = machine_dir(settings, machine_id) / "processed"
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"forecast_{method}.json"
+    path.write_text(f.model_dump_json(indent=2), encoding="utf-8")
+    typer.echo(f"Saved: {path}")
+
+
+@app.command("experiment-prediction")
+def experiment_prediction(
+    machine_id: str = typer.Argument(...),
+    horizon_h: float = typer.Option(72.0),
+    exclude_sensor: list[str] = typer.Option(None, "--exclude-sensor"),
+    seed: int = typer.Option(42),
+    name: str = typer.Option("prediction", help="Run name (letters, digits, - and _)"),
+) -> None:
+    """Leave-one-cycle-out comparison of the prediction methods; stores a reproducible run."""
+    settings = load_settings()
+    try:
+        profile, storage, features = _features_for(settings, machine_id, 3600.0, 600.0)
+        with storage:
+            run, scores = run_prediction_experiment(
+                settings,
+                storage,
+                profile,
+                features,
+                horizon_h=horizon_h,
+                seed=seed,
+                dataset_options={"exclude_sensors": tuple(exclude_sensor or ())},
+                name=name,
+            )
+    except (MachineError, FrameError, FeatureError, PredictionError, RunError) as exc:
+        raise _fail(exc) from exc
+    typer.echo(f"Run {run.manifest.run_id} (seed {seed}, horizon {horizon_h:g} h)")
+    typer.echo(
+        f"{'method':<14}{'MAE':>8}{'MAE<=72h':>10}{'cover80':>9}{'width':>8}{'Brier skill':>13}"
+    )
+    for sc in scores:
+        late = f"{sc.mae_last72_h:.1f}h" if sc.mae_last72_h is not None else "-"
+        skill = f"{sc.brier_skill:.2f}" if sc.brier_skill is not None else "-"
+        typer.echo(
+            f"{sc.method:<14}{sc.mae_h:>7.1f}h{late:>10}{sc.coverage80:>9.2f}"
+            f"{sc.mean_width_h:>7.0f}h{skill:>13}"
         )
     typer.echo(f"Saved in {run.path}")

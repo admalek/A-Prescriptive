@@ -138,6 +138,22 @@ danych, pierwsze 25% okien to wzorzec odniesienia (opcja `--reference-frac`).
 i zapisuje powtarzalne uruchomienie w `experiments/`. Wielokrotne ziarna symulatora:
 `uv run python scripts/diagnosis_study.py --seeds 101-110`. Pierwsze wyniki: `docs/wyniki_k4.md`.
 
+## Predykcja RUL (K5)
+
+```bash
+uv run diagsys predict press-01 --exclude-sensor load_pct               # prognoza "teraz"
+uv run diagsys predict press-01 --at 2026-03-01T12:00 --method age_baseline   # uczciwy backtest
+uv run diagsys experiment-prediction press-01 --exclude-sensor load_pct   # ocena leave-one-cycle-out
+```
+
+`predict` uczy model na zapisanych awariach (arkusz `historia` albo `ingest-events`) i podaje medianę
+pozostałego czasu życia, przedział 80% i przybliżone prawdopodobieństwo awarii w horyzoncie.
+Z `--at` model widzi tylko dane i awarie do wskazanej chwili. Ostrzeżenia mówią wprost, gdy awarii
+w historii jest za mało (poniżej 3 cykli prognoza jest niewiarygodna). Wynik trafia do
+`processed/forecast_<metoda>.json` (kontrakt `Forecast`). Metody: `age_baseline` (bez czujników) i
+`quantile_gbm`. Pierwsze wyniki, także niekorzystne: `docs/wyniki_k5.md`. Badanie na wielu ziarnach:
+`uv run python scripts/prediction_study.py --seeds 101-110`.
+
 ## Struktura
 
 ```
@@ -164,7 +180,7 @@ tests/
 | K3 | Walidacja, czyszczenie danych i cechy | zrobiony |
 | A | Import Excela, szkielet powtarzalnych eksperymentów, schemat architektury | zrobiony |
 | K4 | Diagnoza: anomalie, epizody alarmów, czujniki-sprawcy | zrobiony (hipotezy przyczyn: później) |
-| K5 | Predykcja (RUL) | następny |
+| K5 | Predykcja (RUL) z przedziałem, punkt odniesienia, ocena | zrobiony (kalibracja przedziałów: później) |
 | K6 | Serwer modeli (Bielik) i RAG per maszyna | |
 | K7 | Preskrypcja | |
 | K8 | Orkiestrator, raport, kontrola, interfejs | |

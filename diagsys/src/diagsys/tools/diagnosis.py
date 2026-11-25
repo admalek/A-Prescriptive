@@ -77,6 +77,7 @@ def diagnose(
     stats: tuple[str, ...] = DEFAULT_STATS,
     reference_frac: float = 0.25,
     min_reference_windows: int = 12,
+    reference_windows: int | None = None,
     quantile: float = 0.995,
     margin: float = 1.0,
     min_run: int = 3,
@@ -88,6 +89,8 @@ def diagnose(
         raise DiagnosisError(f"unknown method {method!r}: use one of {', '.join(METHODS)}")
     if not 0.05 <= reference_frac <= 0.9:
         raise DiagnosisError("reference_frac must be between 0.05 and 0.9")
+    if reference_windows is not None and reference_windows < 5:
+        raise DiagnosisError("reference_windows must be at least 5")
     if not 0.5 <= quantile < 1.0 or margin <= 0 or min_run < 1 or merge_gap < 0:
         raise DiagnosisError("invalid alarm settings (quantile, margin, min_run, merge_gap)")
 
@@ -104,18 +107,15 @@ def diagnose(
         raise DiagnosisError("features must be ordered by segment and time")
 
     valid = ~np.isnan(cube).any(axis=(1, 2))
-    z = np.full_like(cube, np.nan)
-    reference = np.zeros(seg.size, dtype=bool)
-    skipped: list[int] = []
-    for s in np.unique(seg):
-        idx = np.flatnonzero((seg == s) & valid)
-        n_ref = max(math.ceil(reference_frac * idx.size), min_reference_windows)
-        if idx.size < n_ref + min_run:
-            skipped.append(int(s))
-            continue
-        ref_idx = idx[:n_ref]
-        reference[ref_idx] = True
-        z[seg == s] = _robust_z(cube[seg == s], cube[ref_idx])
+    z, reference, skipped = reference_zscores(
+        cube,
+        seg,
+        valid,
+        reference_frac=reference_frac,
+        min_reference_windows=min_reference_windows,
+        reference_windows=reference_windows,
+        min_tail=min_run,
+    )
     usable = reference | (valid & ~np.isin(seg, skipped))
     if not reference.any():
         raise DiagnosisError(
@@ -148,6 +148,7 @@ def diagnose(
         "exclude_sensors": list(exclude_sensors),
         "reference_frac": reference_frac,
         "min_reference_windows": min_reference_windows,
+        "reference_windows": reference_windows,
         "quantile": quantile,
         "margin": margin,
         "min_run": min_run,
@@ -169,6 +170,42 @@ def diagnose(
         skipped_segments=skipped,
         monitored_hours=float(monitored),
     )
+
+
+def reference_zscores(
+    cube: np.ndarray,
+    seg: np.ndarray,
+    valid: np.ndarray,
+    *,
+    reference_frac: float = 0.25,
+    min_reference_windows: int = 12,
+    reference_windows: int | None = None,
+    min_tail: int = 1,
+) -> tuple[np.ndarray, np.ndarray, list[int]]:
+    """Robust z-scores of every window against the healthy start of its own segment.
+
+    The reference is the first `reference_windows` valid windows of the segment. When that is not
+    given, it is the first `reference_frac` of the segment's valid windows, which depends on how
+    long the segment turns out to be: fine for analysing recorded data, but it looks into the
+    future, so use a fixed `reference_windows` wherever a result must be possible in real time.
+    Returns (z, reference mask, ids of segments too short for a reference plus `min_tail` windows).
+    """
+    z = np.full_like(cube, np.nan)
+    reference = np.zeros(seg.size, dtype=bool)
+    skipped: list[int] = []
+    for s in np.unique(seg):
+        idx = np.flatnonzero((seg == s) & valid)
+        if reference_windows is not None:
+            n_ref = reference_windows
+        else:
+            n_ref = max(math.ceil(reference_frac * idx.size), min_reference_windows)
+        if idx.size < n_ref + min_tail:
+            skipped.append(int(s))
+            continue
+        ref_idx = idx[:n_ref]
+        reference[ref_idx] = True
+        z[seg == s] = _robust_z(cube[seg == s], cube[ref_idx])
+    return z, reference, skipped
 
 
 def sensors_in(features: pa.Table) -> list[str]:
