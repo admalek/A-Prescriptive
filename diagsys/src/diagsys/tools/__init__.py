@@ -6,6 +6,7 @@ from .diagnosis import (
     DiagnosisResult,
     Episode,
     diagnose,
+    reference_zscores,
     to_anomaly_report,
 )
 
@@ -15,5 +16,30 @@ __all__ = [
     "DiagnosisResult",
     "Episode",
     "diagnose",
+    "reference_zscores",
     "to_anomaly_report",
+]
+
+from .prediction import (  # noqa: E402
+    RUL_METHODS,
+    ForecastResult,
+    PredictionError,
+    build_dataset,
+    failure_probability,
+    fit_model,
+    forecast_latest,
+    predict_windows,
+    reliability_warnings,
+)
+
+__all__ += [
+    "RUL_METHODS",
+    "ForecastResult",
+    "PredictionError",
+    "build_dataset",
+    "failure_probability",
+    "fit_model",
+    "forecast_latest",
+    "predict_windows",
+    "reliability_warnings",
 ]

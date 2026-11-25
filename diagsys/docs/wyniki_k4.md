@@ -31,6 +31,11 @@ Czułość na próg czasu (zbiór testowy, recall): 24 h → 0,50 (reguła) i 0,
 
 ## Wnioski i zastrzeżenia
 
+- **Wzorzec odniesienia podgląda przyszłość.** Domyślnie to pierwsze 25% okien segmentu, więc jego
+  wielkość zależy od długości całego segmentu, której przy bieżącej pracy maszyny nie znamy. Dla
+  analizy zapisanych danych to w porządku, ale czasy wyprzedzenia z tej tabeli są nieco optymistyczne.
+  Opcja `reference_windows` (stała liczba okien, jak w K5) jest dostępna w `diagnose`, lecz wyniki
+  poniżej policzono bez niej. Powtórzenie badania z opcją stałą, na nowych ziarnach, jest do zrobienia.
 - Żadna metoda nie wygrywa jednoznacznie. Isolation Forest daje ok. 2–3 razy mniej fałszywych alarmów,
   reguła progowa wykrywa więcej awarii. Na zbiorze deweloperskim IF był lepszy pod obydwoma
   względami, na testowym nie, więc różnice w recallu mieszczą się w zmienności między zbiorami.
