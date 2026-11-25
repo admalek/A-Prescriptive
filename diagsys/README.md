@@ -154,6 +154,23 @@ w historii jest za mało (poniżej 3 cykli prognoza jest niewiarygodna). Wynik t
 `quantile_gbm`. Pierwsze wyniki, także niekorzystne: `docs/wyniki_k5.md`. Badanie na wielu ziarnach:
 `uv run python scripts/prediction_study.py --seeds 101-110`.
 
+## Dokumentacja maszyny i modele (K6)
+
+```bash
+# pliki .txt, .md, .pdf, .docx wrzucasz do data/machines/<maszyna>/docs/ (kontekst z Excela też tam trafia)
+uv run diagsys docs index press-01                    # przyrostowo, tylko zmienione pliki
+uv run diagsys docs search press-01 "wymiana łożyska" -k 5
+uv run diagsys llm check                              # czy serwer modelu odpowiada
+uv run diagsys docs ask press-01 "jak często wymieniać łożyska?"   # wymaga modelu
+```
+
+Indeks każdej maszyny jest osobny (`models/rag.duckdb`, wyszukiwanie dokładne po podobieństwie
+kosinusowym). Wyszukiwanie działa bez serwera. `docs ask` odpowiada wyłącznie z odnalezionych
+fragmentów, wymaga cytowania ich numerów, a kod sprawdza, czy numery istnieją: odpowiedź bez
+poprawnego źródła jest oznaczona ostrzeżeniem, a przy braku fragmentów model nie jest w ogóle
+wywoływany. Uruchomienie Bielika (Ollama, llama.cpp), wybór embeddingów i ograniczenia:
+`docs/modele.md`.
+
 ## Struktura
 
 ```
@@ -181,7 +198,7 @@ tests/
 | A | Import Excela, szkielet powtarzalnych eksperymentów, schemat architektury | zrobiony |
 | K4 | Diagnoza: anomalie, epizody alarmów, czujniki-sprawcy | zrobiony (hipotezy przyczyn: później) |
 | K5 | Predykcja (RUL) z przedziałem, punkt odniesienia, ocena | zrobiony (kalibracja przedziałów: później) |
-| K6 | Serwer modeli (Bielik) i RAG per maszyna | |
+| K6 | Serwer modeli (Bielik) i RAG per maszyna | zrobiony (z modelem testowany tylko na atrapie serwera) |
 | K7 | Preskrypcja | |
 | K8 | Orkiestrator, raport, kontrola, interfejs | |
 | K9-K11 | Ewaluacja, utwardzenie, pilot | |

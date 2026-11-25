@@ -1,6 +1,6 @@
 """Command line interface: doctor, machine, simulate, ingest, ingest-events, data summary,
 quality, clean, features, import-xlsx, xlsx-template, diagnose, experiment-diagnosis, predict,
-experiment-prediction."""
+experiment-prediction, llm check, docs index/search/ask."""
 
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +13,7 @@ import yaml
 
 from . import __version__
 from .config import load_settings
-from .contracts import QualityReport
+from .contracts import ChatMessage, QualityReport
 from .data import (
     FLAG_IMPUTED,
     FeatureError,
@@ -31,6 +31,7 @@ from .doctor import run_checks
 from .eval import RunError, run_diagnosis_experiment, run_prediction_experiment
 from .gateway import SimConfig, write_simulation
 from .gateway import simulate as run_simulation
+from .llm import LLMError, OpenAICompatClient
 from .machines import (
     MachineError,
     add_sensors,
@@ -38,6 +39,13 @@ from .machines import (
     list_machines,
     load_machine,
     machine_dir,
+)
+from .rag import (
+    RagError,
+    answer_question,
+    index_machine,
+    make_embedder,
+    search_machine,
 )
 from .storage import DuckDBStorage
 from .tools import (
@@ -60,7 +68,11 @@ app = typer.Typer(
 machine_app = typer.Typer(help="Machine profiles.", no_args_is_help=True)
 data_app = typer.Typer(help="Inspect stored data.", no_args_is_help=True)
 app.add_typer(machine_app, name="machine")
+llm_app = typer.Typer(help="Model server (Bielik via Ollama or llama.cpp).", no_args_is_help=True)
+docs_app = typer.Typer(help="Machine documentation: index, search, ask.", no_args_is_help=True)
 app.add_typer(data_app, name="data")
+app.add_typer(llm_app, name="llm")
+app.add_typer(docs_app, name="docs")
 
 _LABEL = {"ok": "[OK]  ", "warn": "[WARN]", "fail": "[FAIL]"}
 
@@ -678,3 +690,101 @@ def experiment_prediction(
             f"{sc.mean_width_h:>7.0f}h{skill:>13}"
         )
     typer.echo(f"Saved in {run.path}")
+
+
+# --- model server and documentation (K6) --------------------------------------------------------
+
+
+@llm_app.command("check")
+def llm_check() -> None:
+    """Check that the model server answers, and that the configured models are available."""
+    settings = load_settings()
+    try:
+        client = OpenAICompatClient.from_settings(settings)
+        names = client.models()
+        typer.echo(
+            f"Server {settings.llm_base_url}: {len(names)} models: {', '.join(names) or '-'}"
+        )
+        for role, wanted in (("chat", settings.llm_model), ("embedding", settings.embedding_model)):
+            if role == "embedding" and settings.embedding_backend != "server":
+                continue
+            if not any(n == wanted or n.startswith(wanted + ":") for n in names):
+                typer.echo(f"  WARNING: {role} model {wanted!r} is not in the list above")
+        reply = client.chat(
+            [ChatMessage(role="user", content="Odpowiedz jednym słowem: OK")], max_tokens=16
+        )
+        typer.echo(f"  chat model {settings.llm_model!r} answered: {reply[:80]!r}")
+        if settings.embedding_backend == "server":
+            dim = len(client.embed(["test"])[0])
+            typer.echo(f"  embedding model {settings.embedding_model!r}: vectors of size {dim}")
+        else:
+            typer.echo(
+                "  embeddings: local 'hash' backend (DIAGSYS_EMBEDDING_BACKEND=server to change)"
+            )
+    except LLMError as exc:
+        raise _fail(exc) from exc
+
+
+@docs_app.command("index")
+def docs_index(
+    machine_id: str = typer.Argument(...),
+    rebuild: bool = typer.Option(False, help="Forget the index and build it again"),
+) -> None:
+    """Index the files in the machine's docs/ folder (.txt, .md, .pdf, .docx); incremental."""
+    settings = load_settings()
+    try:
+        embedder = make_embedder(settings)
+        report = index_machine(settings, machine_id, embedder, rebuild=rebuild)
+    except (MachineError, RagError, LLMError) as exc:
+        raise _fail(exc) from exc
+    typer.echo(f"Indexed {machine_id} into {report.collection} (embedder {embedder.id})")
+    typer.echo(
+        f"  files: {len(report.added)} new, {len(report.updated)} changed, "
+        f"{len(report.removed)} removed, {len(report.unchanged)} unchanged"
+    )
+    typer.echo(f"  passages: {report.passages_added} added, {report.passages_total} in total")
+    for name, reason in report.skipped:
+        typer.echo(f"  skipped {name}: {reason}")
+    if report.passages_total == 0:
+        typer.echo("  nothing to search yet: put manuals into the machine's docs/ folder")
+
+
+@docs_app.command("search")
+def docs_search(
+    machine_id: str = typer.Argument(...),
+    query: str = typer.Argument(..., help="What to look for"),
+    k: int = typer.Option(5, "-k", "--top", help="Number of passages"),
+) -> None:
+    """Find the passages of the machine's documentation that best match the query."""
+    settings = load_settings()
+    try:
+        passages = search_machine(settings, machine_id, make_embedder(settings), query, k)
+    except (MachineError, RagError, LLMError) as exc:
+        raise _fail(exc) from exc
+    if not passages:
+        typer.echo("No passages found. Run: diagsys docs index " + machine_id)
+        return
+    for i, p in enumerate(passages, start=1):
+        where = p.doc_id + (f", p. {p.page}" if p.page else "")
+        typer.echo(f"[{i}] {p.score:.2f}  {where}")
+        typer.echo("    " + " ".join(p.text.split())[:240])
+
+
+@docs_app.command("ask")
+def docs_ask(
+    machine_id: str = typer.Argument(...),
+    question: str = typer.Argument(...),
+    k: int = typer.Option(5, "-k", "--top", help="Number of passages given to the model"),
+) -> None:
+    """Answer a question from the machine's documentation, with cited sources (needs the model)."""
+    settings = load_settings()
+    try:
+        passages = search_machine(settings, machine_id, make_embedder(settings), question, k)
+        answer = answer_question(OpenAICompatClient.from_settings(settings), question, passages)
+    except (MachineError, RagError, LLMError) as exc:
+        raise _fail(exc) from exc
+    typer.echo(answer.text)
+    for n, source in zip(answer.citations, answer.sources, strict=True):
+        typer.echo(f"  [{n}] {source.ref}")
+    for warning in answer.warnings:
+        typer.echo(f"WARNING: {warning}")

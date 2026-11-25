@@ -1,6 +1,7 @@
 """Runtime settings, read from environment variables (prefix DIAGSYS_) and an optional .env file."""
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,6 +16,9 @@ class Settings(BaseSettings):
     llm_model: str = "bielik-4.5b-instruct"
     llm_timeout_s: float = 120.0
     embedding_model: str = "multilingual-e5-small"
+    # "hash": local character n-gram vectors, no model needed (works offline, weaker semantics)
+    # "server": embeddings from the model server (needs embedding_model to be served)
+    embedding_backend: Literal["hash", "server"] = "hash"
 
     max_agent_steps: int = 12
     log_level: str = "INFO"

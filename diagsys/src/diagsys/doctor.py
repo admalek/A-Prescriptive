@@ -95,7 +95,8 @@ def check_llm_server(settings: Settings) -> Check:
         return Check(
             "Model server",
             "warn",
-            f"{settings.llm_base_url} is not reachable (not needed until K6)",
+            f"{settings.llm_base_url} is not reachable (needed only for answers and report text; "
+            "document search works without it)",
         )
     return Check("Model server", "ok", f"{settings.llm_base_url} answers")
 
