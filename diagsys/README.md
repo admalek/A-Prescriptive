@@ -132,7 +132,8 @@ uv run diagsys experiment-diagnosis press-01 --exclude-sensor load_pct   # poró
 (`robust_z`: reguła progowa jako punkt odniesienia, `iforest`: Isolation Forest) i podaje epizody
 alarmowe wraz z czujnikami, które je wywołały. Wynik zapisuje jako `processed/diagnosis_<metoda>.json`
 (kontrakt `AnomalyReport`). Założenie: maszyna jest zdrowa na początku każdego ciągłego segmentu
-danych, pierwsze 25% okien to wzorzec odniesienia (opcja `--reference-frac`).
+danych, pierwsze 144 okna (24 h) to wzorzec odniesienia, stała liczba, więc wynik nie zależy od
+przyszłości (`--reference-windows 0` przełącza na ułamek segmentu, `--reference-frac`).
 
 `experiment-diagnosis` porównuje metody z wczytanymi awariami (wyprzedzenie alarmu, fałszywe alarmy)
 i zapisuje powtarzalne uruchomienie w `experiments/`. Wielokrotne ziarna symulatora:
@@ -151,7 +152,8 @@ pozostałego czasu życia, przedział 80% i przybliżone prawdopodobieństwo awa
 Z `--at` model widzi tylko dane i awarie do wskazanej chwili. Ostrzeżenia mówią wprost, gdy awarii
 w historii jest za mało (poniżej 3 cykli prognoza jest niewiarygodna). Wynik trafia do
 `processed/forecast_<metoda>.json` (kontrakt `Forecast`). Metody: `age_baseline` (bez czujników) i
-`quantile_gbm`. Pierwsze wyniki, także niekorzystne: `docs/wyniki_k5.md`. Badanie na wielu ziarnach:
+`quantile_gbm` oraz `quantile_gbm_cal` (przedział 80% poszerzony korektą konforemną z wewnętrznej
+walidacji po cyklach; wymaga co najmniej 3 cykli awarii). Pierwsze wyniki, także niekorzystne: `docs/wyniki_k5.md`. Badanie na wielu ziarnach:
 `uv run python scripts/prediction_study.py --seeds 101-110`.
 
 ## Dokumentacja maszyny i modele (K6)
@@ -196,8 +198,8 @@ tests/
 | K2 | Dane syntetyczne, import plików, baza DuckDB | zrobiony |
 | K3 | Walidacja, czyszczenie danych i cechy | zrobiony |
 | A | Import Excela, szkielet powtarzalnych eksperymentów, schemat architektury | zrobiony |
-| K4 | Diagnoza: anomalie, epizody alarmów, czujniki-sprawcy | zrobiony (hipotezy przyczyn: później) |
-| K5 | Predykcja (RUL) z przedziałem, punkt odniesienia, ocena | zrobiony (kalibracja przedziałów: później) |
+| K4 | Diagnoza: anomalie, epizody alarmów, czujniki-sprawcy | zrobiony, wzorzec odniesienia stały (hipotezy przyczyn: później) |
+| K5 | Predykcja (RUL) z przedziałem, punkt odniesienia, ocena | zrobiony, z kalibracją przedziałów |
 | K6 | Serwer modeli (Bielik) i RAG per maszyna | zrobiony (z modelem testowany tylko na atrapie serwera) |
 | K7 | Preskrypcja | |
 | K8 | Orkiestrator, raport, kontrola, interfejs | |

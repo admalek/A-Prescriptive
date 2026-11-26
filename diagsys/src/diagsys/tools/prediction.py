@@ -18,6 +18,9 @@ Two methods share the dataset and the output format:
   age_baseline   no sensors: lifetimes of the training cycles minus the age since the last repair
   quantile_gbm   gradient boosting with quantile loss on health features (robust z-scores of
                  each sensor against its reference, their trailing means, and the age)
+  quantile_gbm_cal  the same, with the 80% interval widened by a conformal correction: the
+                 out-of-fold miss of q10/q90 on the training cycles (inner leave-one-cycle-out)
+                 sets how far the outer quantiles move; the median is unchanged
 """
 
 from dataclasses import dataclass
@@ -30,7 +33,8 @@ from ..contracts import Forecast
 from ..contracts.common import Source
 from .diagnosis import DiagnosisError, _cube, _int64, reference_zscores, sensors_in
 
-RUL_METHODS = ("age_baseline", "quantile_gbm")
+RUL_METHODS = ("age_baseline", "quantile_gbm", "quantile_gbm_cal")
+CAL_ALPHA = 0.2  # the calibrated interval targets 80% coverage (quantiles 0.1 and 0.9)
 QUANTILES = (0.1, 0.25, 0.5, 0.75, 0.9)
 DEFAULT_STATS = ("mean", "std", "slope_per_h")
 DEFAULT_TRAILING = (6, 36, 144)  # windows: 1 h, 6 h, 24 h at the default 10 min step
@@ -164,7 +168,7 @@ def fit_model(
     if train is not None:
         mask &= train
     cycles = np.unique(ds.cycle[mask])
-    minimum = 1 if method == "age_baseline" else 2
+    minimum = {"age_baseline": 1, "quantile_gbm": 2, "quantile_gbm_cal": 3}[method]
     if cycles.size < minimum:
         raise PredictionError(
             f"{method} needs at least {minimum} completed failure cycle(s) with usable data, "
@@ -183,29 +187,15 @@ def fit_model(
             return np.clip(quantiles[None, :] - age_h[:, None], 0.0, None)
 
     else:
-        try:
-            from sklearn.ensemble import HistGradientBoostingRegressor
-        except ImportError as exc:  # pragma: no cover - depends on the optional 'ml' extra
-            raise PredictionError(
-                "method 'quantile_gbm' needs scikit-learn: uv sync --extra ml"
-            ) from exc
         target = np.log1p(ds.rul_h[mask])
-        models = [
-            HistGradientBoostingRegressor(
-                loss="quantile",
-                quantile=q,
-                max_iter=150,
-                learning_rate=0.05,
-                max_depth=3,
-                min_samples_leaf=40,
-                l2_regularization=1.0,
-                random_state=seed,
-            ).fit(ds.X[mask], target)
-            for q in QUANTILES
-        ]
+        models = _fit_gbm(ds.X[mask], target, QUANTILES, seed)
+        correction = 0.0
+        if method == "quantile_gbm_cal":
+            correction = _conformal_correction(ds, mask, cycles, seed)
 
         def predict(X, age_h):
-            return np.expm1(np.column_stack([m.predict(X) for m in models]))
+            log_q = np.column_stack([m.predict(X) for m in models])
+            return np.expm1(_widen(log_q, correction))
 
     return Model(
         method=method,
@@ -215,6 +205,60 @@ def fit_model(
         seed=seed,
         _predict=predict,
     )
+
+
+def _fit_gbm(X: np.ndarray, y: np.ndarray, levels, seed: int) -> list:
+    try:
+        from sklearn.ensemble import HistGradientBoostingRegressor
+    except ImportError as exc:  # pragma: no cover - depends on the optional 'ml' extra
+        raise PredictionError("quantile methods need scikit-learn: uv sync --extra ml") from exc
+    return [
+        HistGradientBoostingRegressor(
+            loss="quantile",
+            quantile=q,
+            max_iter=150,
+            learning_rate=0.05,
+            max_depth=3,
+            min_samples_leaf=40,
+            l2_regularization=1.0,
+            random_state=seed,
+        ).fit(X, y)
+        for q in levels
+    ]
+
+
+def _conformal_correction(ds: Dataset, mask: np.ndarray, cycles: np.ndarray, seed: int) -> float:
+    """Conformalised quantile regression in log time (Romano et al. 2019), cycles as folds.
+
+    For each training cycle the q10/q90 models are fitted on the other cycles and scored on it:
+    E = max(q10 - y, y - q90), positive when the true value fell outside the interval. The
+    correction is the (1 - alpha)(1 + 1/n) quantile of E over all out-of-fold windows. Windows of
+    one cycle are strongly correlated, so the guarantee is approximate; the held-out evaluation
+    says whether coverage really improved.
+    """
+    low, high = QUANTILES[0], QUANTILES[-1]
+    y_all = np.log1p(ds.rul_h)
+    scores = []
+    for c in cycles:
+        fit = mask & (ds.cycle != c)
+        held = mask & (ds.cycle == c)
+        lo, hi = _fit_gbm(ds.X[fit], y_all[fit], (low, high), seed)
+        y = y_all[held]
+        scores.append(np.maximum(lo.predict(ds.X[held]) - y, y - hi.predict(ds.X[held])))
+    e = np.concatenate(scores)
+    level = min(1.0, (1 - CAL_ALPHA) * (1 + 1 / e.size))
+    return float(np.quantile(e, level))
+
+
+def _widen(log_q: np.ndarray, correction: float) -> np.ndarray:
+    """Move the lower quantiles down and the upper ones up by `correction` (log hours)."""
+    if correction == 0.0:
+        return log_q
+    out = log_q.copy()
+    mid = len(QUANTILES) // 2
+    out[:, :mid] = np.minimum(out[:, :mid] - correction, out[:, [mid]])
+    out[:, mid + 1 :] = np.maximum(out[:, mid + 1 :] + correction, out[:, [mid]])
+    return np.clip(out, 0.0, None)
 
 
 def predict_windows(model: Model, ds: Dataset, rows: np.ndarray | None = None) -> np.ndarray:

@@ -212,3 +212,20 @@ def test_cli_predict_and_experiment(tmp_path, monkeypatch):
     assert "age_baseline" in exp and "quantile_gbm" in exp and "Saved in" in exp
     bad = run("predict", "sim-01", "--method", "magic", code=1)
     assert "unknown method" in bad
+
+
+def test_calibrated_method_needs_three_cycles_and_only_widens_the_interval():
+    table, failures = lifecycle(4)
+    ds = build_dataset(table, failures)
+    with pytest.raises(PredictionError, match="at least 3"):
+        fit_model("quantile_gbm_cal", build_dataset(table, failures[:2]))
+    plain = fit_model("quantile_gbm", ds, seed=3)
+    cal = fit_model("quantile_gbm_cal", ds, seed=3)
+    rows = np.flatnonzero(ds.usable)[::20]
+    a = plain.predict(ds.X[rows], ds.age_h[rows])
+    b = cal.predict(ds.X[rows], ds.age_h[rows])
+    assert np.all(np.diff(b, axis=1) >= 0)
+    # the median itself is not shifted; it can only differ where the plain model's raw quantiles
+    # crossed and were repaired upwards
+    assert np.all(b[:, 2] <= a[:, 2] + 1e-9)
+    assert np.median(np.abs(np.log1p(a[:, 2]) - np.log1p(b[:, 2]))) < 0.05

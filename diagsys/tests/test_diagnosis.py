@@ -87,9 +87,15 @@ def test_each_segment_is_judged_against_its_own_reference():
 
 def test_reference_windows_never_alarm_and_scores_are_nan_only_for_missing_features():
     table = make_features([(200, {"a": (0, 30.0)})])
-    result = diagnose(table, method="robust_z")
+    result = diagnose(table, method="robust_z", reference_windows=None)
     assert result.reference.sum() == 50
     assert not result.alarm[result.reference].any()
+
+
+def test_default_reference_is_fixed_and_independent_of_segment_length():
+    short = diagnose(make_features([(300, {})]), method="robust_z")
+    long = diagnose(make_features([(900, {})]), method="robust_z")
+    assert short.reference.sum() == long.reference.sum() == 144
 
 
 def test_detection_time_is_the_end_of_the_window_completing_the_run():
