@@ -43,3 +43,13 @@ __all__ += [
     "predict_windows",
     "reliability_warnings",
 ]
+
+from .prescription import (  # noqa: E402
+    CostModel,
+    Prescription,
+    PrescriptionError,
+    ServiceOption,
+    prescribe,
+)
+
+__all__ += ["CostModel", "Prescription", "PrescriptionError", "ServiceOption", "prescribe"]

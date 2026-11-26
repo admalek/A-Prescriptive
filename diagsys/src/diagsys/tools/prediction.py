@@ -23,7 +23,7 @@ Two methods share the dataset and the output format:
                  sets how far the outer quantiles move; the median is unchanged
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -81,6 +81,7 @@ class ForecastResult:
     as_of: datetime
     age_h: float
     warnings: list[str]
+    quantiles_h: list[float] = field(default_factory=list)  # the five RUL quantiles (QUANTILES)
 
 
 def build_dataset(
@@ -270,11 +271,10 @@ def predict_windows(model: Model, ds: Dataset, rows: np.ndarray | None = None) -
     return out
 
 
-def failure_probability(quantile_hours: np.ndarray, horizon_h: float) -> np.ndarray:
-    """P(RUL <= horizon) from the predicted quantiles: a piecewise-linear CDF in log time.
+def cdf_points(quantile_hours: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Knots (log1p hours, probability) of the piecewise-linear CDF of RUL, one row per forecast.
 
-    Approximate by construction (five quantiles, tails extended linearly); evaluate it with the
-    Brier score before relying on it.
+    Tails are extended linearly from the outer quantiles (left clipped at 0 hours).
     """
     q = np.atleast_2d(quantile_hours)
     x = np.log1p(q)
@@ -283,6 +283,16 @@ def failure_probability(quantile_hours: np.ndarray, horizon_h: float) -> np.ndar
     right = x[:, -1] + (x[:, -1] - x[:, -2]) * ((1 - levels[-1]) / (levels[-1] - levels[-2]))
     xs = np.column_stack([left, x, right]) + np.arange(x.shape[1] + 2) * 1e-9
     ps = np.concatenate([[0.0], levels, [1.0]])
+    return xs, ps
+
+
+def failure_probability(quantile_hours: np.ndarray, horizon_h: float) -> np.ndarray:
+    """P(RUL <= horizon) from the predicted quantiles: a piecewise-linear CDF in log time.
+
+    Approximate by construction (five quantiles, tails extended linearly); evaluate it with the
+    Brier score before relying on it.
+    """
+    xs, ps = cdf_points(quantile_hours)
     target = np.log1p(horizon_h)
     return np.array([np.interp(target, row, ps) for row in xs])
 
@@ -334,6 +344,7 @@ def forecast_latest(
         as_of=_EPOCH + timedelta(microseconds=int(ds.window_end[i])),
         age_h=float(ds.age_h[i]),
         warnings=reliability_warnings(model, float(ds.age_h[i])),
+        quantiles_h=[float(x) for x in q],
     )
 
 

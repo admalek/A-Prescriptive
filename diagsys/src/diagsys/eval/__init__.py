@@ -7,6 +7,7 @@ from .prediction import (
     run_prediction_experiment,
     score_predictions,
 )
+from .prescription import CycleOutcome, PolicyScore, replay_cycles, score_policies
 from .run import (
     Run,
     RunError,
@@ -19,6 +20,10 @@ from .run import (
 )
 
 __all__ = [
+    "CycleOutcome",
+    "PolicyScore",
+    "replay_cycles",
+    "score_policies",
     "PredictionScore",
     "cross_validate",
     "run_prediction_experiment",
