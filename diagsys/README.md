@@ -173,6 +173,23 @@ poprawnego źródła jest oznaczona ostrzeżeniem, a przy braku fragmentów mode
 wywoływany. Uruchomienie Bielika (Ollama, llama.cpp), wybór embeddingów i ograniczenia:
 `docs/modele.md`.
 
+## Okno nadzorcy
+
+```bash
+uv sync --extra app          # raz: Streamlit
+uv run diagsys ui            # strona lokalna: http://127.0.0.1:8501 (tylko ten komputer)
+```
+
+Zakładki: **Pliki** (wpisujesz pełne ścieżki, po jednej w wierszu: `.xlsx`, `.csv`/`.tsv`/`.parquet`
+jako odczyty albo historia awarii, dokumentacja `.txt`/`.md`/`.pdf`/`.docx`; wynik importu dla
+każdego pliku w tabeli, błędny plik nie zatrzymuje reszty) i **Wyniki** (dla maszyny wybranej w
+panelu bocznym: co jest zapisane, prognoza z przedziałem i ostrzeżeniami, diagnoza obiema metodami
+z wykresem wyniku i awariami, wyszukiwanie i pytania do dokumentacji). Maszynę tworzysz w panelu
+bocznym. Prognoza używa najlepszej metody, na jaką pozwala historia (3 cykle: `quantile_gbm_cal`,
+2: `quantile_gbm`, 1: `age_baseline`, 0: brak prognozy z komunikatem). Logika jest w
+`src/diagsys/ui/service.py` (testowana bez przeglądarki), strona w `ui/app.py`. To jeszcze nie
+zatwierdzanie sugestii przez nadzorcę (K8): okno pokazuje wyniki, nic nie zatwierdza.
+
 ## Struktura
 
 ```
@@ -186,6 +203,7 @@ src/diagsys/
   machines.py    profile maszyn
   doctor.py      sprawdzenie środowiska
   cli.py         polecenie `diagsys`
+  ui/            okno nadzorcy (service.py: logika, app.py: Streamlit)
   tools/ rag/ llm/ agents/ orchestrator/ eval/   (kolejne kroki)
 tests/
 ```

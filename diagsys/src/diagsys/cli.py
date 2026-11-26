@@ -1,6 +1,6 @@
 """Command line interface: doctor, machine, simulate, ingest, ingest-events, data summary,
 quality, clean, features, import-xlsx, xlsx-template, diagnose, experiment-diagnosis, predict,
-experiment-prediction, llm check, docs index/search/ask."""
+experiment-prediction, llm check, docs index/search/ask, ui."""
 
 from datetime import UTC, datetime
 from pathlib import Path
@@ -727,6 +727,31 @@ def llm_check() -> None:
             )
     except LLMError as exc:
         raise _fail(exc) from exc
+
+
+@app.command("ui")
+def ui_command(
+    port: int = typer.Option(8501, help="Port of the local web page"),
+) -> None:
+    """Open the supervisor window in the browser (listens on this computer only)."""
+    import subprocess
+    import sys
+
+    try:
+        import streamlit  # noqa: F401
+    except ImportError as exc:
+        raise _fail(
+            RuntimeError(
+                "the window needs Streamlit: uv sync --extra app (or pip install streamlit)"
+            )
+        ) from exc
+    page = Path(__file__).parent / "ui" / "app.py"
+    command = [
+        sys.executable, "-m", "streamlit", "run", str(page),
+        "--server.address", "127.0.0.1", "--server.port", str(port),
+        "--browser.gatherUsageStats", "false",
+    ]  # fmt: skip
+    raise typer.Exit(subprocess.call(command))  # noqa: S603
 
 
 @docs_app.command("index")
