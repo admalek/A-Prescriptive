@@ -31,7 +31,15 @@ def parse_seeds(text: str) -> list[int]:
     return seeds
 
 
-def run_seed(seed: int, cycles: int, sampling_s: int, horizons: list[float], methods, exclude):
+def run_seed(
+    seed: int,
+    cycles: int,
+    sampling_s: int,
+    horizons: list[float],
+    methods,
+    exclude,
+    reference_windows,
+):
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         settings = Settings(data_dir=tmp / "data", _env_file=None)
@@ -50,7 +58,13 @@ def run_seed(seed: int, cycles: int, sampling_s: int, horizons: list[float], met
             failures = [e.timestamp for e in storage.read_events("sim-01")]
     out = {}
     for method in methods:
-        result = diagnose(features, method=method, exclude_sensors=exclude, seed=seed)
+        result = diagnose(
+            features,
+            method=method,
+            exclude_sensors=exclude,
+            seed=seed,
+            reference_windows=reference_windows,
+        )
         out[method] = {h: score_diagnosis(result, failures, h) for h in horizons}
     return out
 
@@ -81,15 +95,19 @@ def main() -> None:
     ap.add_argument("--sensitivity", default="24,48", help="extra horizons, comma separated")
     ap.add_argument("--methods", default=",".join(METHODS))
     ap.add_argument("--exclude", default="load_pct")
+    ap.add_argument("--reference-windows", type=int, default=144, help="0 = 25%% of the segment")
     ap.add_argument("--json", default=None)
     args = ap.parse_args()
     seeds = parse_seeds(args.seeds)
     horizons = [args.horizon_h] + [float(x) for x in args.sensitivity.split(",") if x]
     methods = args.methods.split(",")
     exclude = tuple(x for x in args.exclude.split(",") if x)
+    ref = args.reference_windows or None
     per_seed = []
     for seed in seeds:
-        per_seed.append(run_seed(seed, args.cycles, args.sampling_s, horizons, methods, exclude))
+        per_seed.append(
+            run_seed(seed, args.cycles, args.sampling_s, horizons, methods, exclude, ref)
+        )
         print(f"seed {seed} done", flush=True)
     summary = {m: {h: pool([r[m][h] for r in per_seed]) for h in horizons} for m in methods}
     print(f"\nseeds {args.seeds}, {args.cycles} cycles each, sampling {args.sampling_s} s")

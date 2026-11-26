@@ -509,7 +509,10 @@ def diagnose_command(
     exclude_sensor: list[str] = typer.Option(
         None, "--exclude-sensor", help="Sensor to leave out, e.g. a load sensor (repeatable)"
     ),
-    reference_frac: float = typer.Option(0.25, help="Healthy start of each segment, as a fraction"),
+    reference_windows: int = typer.Option(
+        144, help="Healthy start of each segment, in windows (0 = a fraction of the segment)"
+    ),
+    reference_frac: float = typer.Option(0.25, help="Fraction used when --reference-windows is 0"),
     window_s: float = typer.Option(3600.0, help="Feature window length in seconds"),
     stride_s: float = typer.Option(600.0, help="Step between windows in seconds"),
     seed: int = typer.Option(42),
@@ -524,6 +527,7 @@ def diagnose_command(
                 method=method,
                 exclude_sensors=tuple(exclude_sensor or ()),
                 reference_frac=reference_frac,
+                reference_windows=reference_windows or None,
                 seed=seed,
             )
     except (MachineError, FrameError, FeatureError, DiagnosisError) as exc:

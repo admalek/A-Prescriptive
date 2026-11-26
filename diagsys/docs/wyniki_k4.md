@@ -8,37 +8,40 @@ skuteczności na prawdziwej maszynie.
 - Dane: symulator, 10 niezależnych maszyn na zbiór, po 6 cykli do awarii (łącznie 60 awarii),
   próbkowanie 60 s, dane „brudne" (braki, skoki, zablokowany czujnik). Czujnik obciążenia
   (`load_pct`) jest wyłączony z diagnozy.
-- Zbiór deweloperski: ziarna 1–10 (tu powstały metody i testy). Zbiór testowy: ziarna 101–110,
-  uruchomiony raz, po zakończeniu prac nad metodami.
+- Zbiór deweloperski: ziarna 1–10 (tu powstały metody i testy). Zbiór testowy: ziarna 201–210,
+  uruchomiony raz, po ostatniej zmianie metod. Ziarna 101–110 posłużyły do pierwszej wersji tej
+  oceny i nie są już zbiorem testowym.
 - Założenie: maszyna jest zdrowa na początku każdego ciągłego segmentu danych (po przerwie, np.
-  naprawie). Pierwsze 25% okien segmentu to wzorzec odniesienia.
+  naprawie). Wzorzec odniesienia to pierwsze 144 okna segmentu (24 h przy kroku 10 min), stała
+  liczba, więc ocena okna nie zależy od przyszłości.
 - Alarm to co najmniej 3 kolejne okna powyżej progu. Próg = kwantyl 0,995 wyników z okien
   odniesienia. Czas wykrycia = koniec okna kończącego serię alarmów (bez użycia późniejszych danych).
 - Alarm jest trafny, jeśli pojawił się nie wcześniej niż 72 h przed najbliższą następną awarią.
   Inaczej to fałszywy alarm (także zbyt wczesny). Fałszywe alarmy liczone na 100 h monitorowanej pracy.
 
-## Wyniki (próg 72 h)
+## Wyniki (próg 72 h, stały wzorzec 144 okien)
 
 | Zbiór | Metoda | Wykryte awarie | Recall | Mediana wyprzedzenia | Fałszywe alarmy / 100 h |
 | --- | --- | --- | --- | --- | --- |
-| deweloperski | reguła progowa (robust z-score) | 25/60 | 0,42 | 44,0 h | 1,21 |
-| deweloperski | Isolation Forest | 29/60 | 0,48 | 43,0 h | 0,37 |
-| **testowy** | reguła progowa (robust z-score) | 37/60 | 0,62 | 38,3 h | 0,86 |
-| **testowy** | Isolation Forest | 31/60 | 0,52 | 41,8 h | 0,38 |
+| deweloperski (1–10) | reguła progowa (robust z-score) | 29/60 | 0,48 | 52,1 h | 1,09 |
+| deweloperski (1–10) | Isolation Forest | 26/60 | 0,43 | 42,3 h | 0,31 |
+| **testowy (201–210)** | reguła progowa (robust z-score) | 34/60 | 0,57 | 36,3 h | 0,90 |
+| **testowy (201–210)** | Isolation Forest | 23/60 | 0,38 | 40,6 h | 0,54 |
 
-Czułość na próg czasu (zbiór testowy, recall): 24 h → 0,50 (reguła) i 0,28 (IF); 48 h → 0,52 i 0,40;
-72 h → 0,62 i 0,52.
+Czułość na próg czasu (zbiór testowy, recall): 24 h → 0,40 (reguła) i 0,22 (IF); 48 h → 0,42 i 0,38;
+72 h → 0,57 i 0,38.
+
+Porównanie na zbiorze deweloperskim ze starym wzorcem (25% segmentu): reguła 0,42 / IF 0,48, czyli
+stały wzorzec nie pogorszył wyników (reguła lepsza, IF nieco gorszy, w granicach zmienności).
 
 ## Wnioski i zastrzeżenia
 
-- **Wzorzec odniesienia podgląda przyszłość.** Domyślnie to pierwsze 25% okien segmentu, więc jego
-  wielkość zależy od długości całego segmentu, której przy bieżącej pracy maszyny nie znamy. Dla
-  analizy zapisanych danych to w porządku, ale czasy wyprzedzenia z tej tabeli są nieco optymistyczne.
-  Opcja `reference_windows` (stała liczba okien, jak w K5) jest dostępna w `diagnose`, lecz wyniki
-  poniżej policzono bez niej. Powtórzenie badania z opcją stałą, na nowych ziarnach, jest do zrobienia.
-- Żadna metoda nie wygrywa jednoznacznie. Isolation Forest daje ok. 2–3 razy mniej fałszywych alarmów,
-  reguła progowa wykrywa więcej awarii. Na zbiorze deweloperskim IF był lepszy pod obydwoma
-  względami, na testowym nie, więc różnice w recallu mieszczą się w zmienności między zbiorami.
+- **Wzorzec odniesienia jest już stały** (poprawka względem pierwszej wersji, w której podglądał
+  przyszłość). Liczby powyżej są więc możliwe do uzyskania w czasie rzeczywistym. Tryb ułamkowy
+  zostaje jako opcja (`--reference-windows 0`) do analizy zapisanych danych.
+- Żadna metoda nie wygrywa jednoznacznie. Na nowych ziarnach reguła progowa wykrywa więcej awarii (0,57 vs 0,38),
+  a Isolation Forest daje mniej fałszywych alarmów (0,54 vs 0,90 na 100 h). Na zbiorze
+  deweloperskim różnica w recallu była mała, więc wynik jest wrażliwy na zbiór.
 - Próbka jest mała (60 awarii na zbiór) i bez przedziałów ufności. Nie wolno z niej wyciągać
   twierdzeń o wyższości metody.
 - Isolation Forest słabo reaguje na przesunięcie pojedynczej cechy jednego czujnika (ocenia punkt w

@@ -68,6 +68,10 @@ class DiagnosisResult:
     monitored_hours: float = 0.0  # time covered by windows outside the reference
 
 
+# 144 windows = 24 h at the default 10 min stride; fixed, so a score never depends on the future
+DEFAULT_REFERENCE_WINDOWS = 144
+
+
 def diagnose(
     features: pa.Table,
     *,
@@ -77,7 +81,7 @@ def diagnose(
     stats: tuple[str, ...] = DEFAULT_STATS,
     reference_frac: float = 0.25,
     min_reference_windows: int = 12,
-    reference_windows: int | None = None,
+    reference_windows: int | None = DEFAULT_REFERENCE_WINDOWS,
     quantile: float = 0.995,
     margin: float = 1.0,
     min_run: int = 3,
@@ -184,10 +188,11 @@ def reference_zscores(
 ) -> tuple[np.ndarray, np.ndarray, list[int]]:
     """Robust z-scores of every window against the healthy start of its own segment.
 
-    The reference is the first `reference_windows` valid windows of the segment. When that is not
-    given, it is the first `reference_frac` of the segment's valid windows, which depends on how
-    long the segment turns out to be: fine for analysing recorded data, but it looks into the
-    future, so use a fixed `reference_windows` wherever a result must be possible in real time.
+    The reference is the first `reference_windows` valid windows of the segment. With
+    `reference_windows=None` it is the first `reference_frac` of the segment's valid windows,
+    which depends on how long the segment turns out to be: fine for analysing recorded data, but
+    it looks into the future, so use a fixed `reference_windows` wherever a result must be
+    possible in real time.
     Returns (z, reference mask, ids of segments too short for a reference plus `min_tail` windows).
     """
     z = np.full_like(cube, np.nan)
