@@ -254,3 +254,30 @@ def test_cli_ask_without_a_server_says_what_to_do(tmp_path, monkeypatch):
     result = runner.invoke(app, ["docs", "ask", "pump-01", "jak często wymieniać łożyska?"])
     assert result.exit_code == 1 and "not reachable" in result.output
     assert runner.invoke(app, ["llm", "check"]).exit_code == 1
+
+
+def test_documented_guidance_is_grounded_or_absent(settings, tmp_path):
+    from diagsys.llm import OpenAICompatClient
+    from diagsys.rag import build_question, documented_guidance
+
+    create_machine(settings, "pompa-01", "Pompa")
+    (machine_dir(settings, "pompa-01") / "docs" / "lozyska.md").write_text(
+        DOCS["lozyska.md"], encoding="utf-8"
+    )
+    embedder = HashingEmbedder()
+    index_machine(settings, "pompa-01", embedder)
+    with StubLLM() as stub:
+        llm = OpenAICompatClient(stub.url, "m")
+        stub.chat_reply = "Sprawdzić łożyska i smarowanie [1]."
+        g = documented_guidance(
+            settings, "pompa-01", llm, embedder, sensors=["vibration"], failure_modes=["łożysko"]
+        )
+        assert g.sources and "źródła: [1] lozyska.md" in g.text
+        sent = stub.requests[-1][2]["messages"][1]["content"]
+        assert "vibration" in sent and "łożysko" in sent  # the question carries the tool facts
+        stub.chat_reply = "BRAK ODPOWIEDZI W DOKUMENTACJI"
+        none = documented_guidance(
+            settings, "pompa-01", llm, embedder, sensors=[], failure_modes=[]
+        )
+        assert none.text == "" and none.sources == [] and none.warnings
+    assert build_question([], []).endswith("?")

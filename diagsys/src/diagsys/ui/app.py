@@ -9,9 +9,11 @@ import pandas as pd
 import streamlit as st
 
 from diagsys.config import load_settings
+from diagsys.decisions import DecisionError
 from diagsys.llm import LLMError
 from diagsys.machines import MachineError
 from diagsys.rag import RagError
+from diagsys.tools import CostModel, PrescriptionError, profile_downtime_cost
 from diagsys.ui import service
 
 LABELS = {"robust_z": "Reguła progowa (robust z-score)", "iforest": "Isolation Forest"}
@@ -41,11 +43,13 @@ def main() -> None:
     if machine_id is None:
         st.info("Utwórz maszynę w panelu bocznym, aby zacząć.")
         return
-    files_tab, results_tab = st.tabs(["Pliki", "Wyniki"])
+    files_tab, results_tab, report_tab = st.tabs(["Pliki", "Wyniki", "Zalecenia i raport"])
     with files_tab:
         _files_tab(settings, machine_id)
     with results_tab:
         _results_tab(settings, machine_id)
+    with report_tab:
+        _report_tab(settings, machine_id)
 
 
 def _sidebar(settings) -> str | None:
@@ -284,6 +288,155 @@ def _docs_section(settings, machine_id: str) -> None:
                     st.write(p.text)
     except (RagError, LLMError, MachineError) as exc:
         st.error(str(exc))
+
+
+VERDICTS = {"approved": "Zatwierdzam", "rejected": "Odrzucam", "modified": "Zmieniam"}
+
+
+def _report_tab(settings, machine_id: str) -> None:
+    st.subheader("Zalecenia i raport")
+    view = service.overview(settings, machine_id)
+    if not view.sensors:
+        st.info("Ta maszyna nie ma jeszcze odczytów. Dodaj plik w zakładce „Pliki”.")
+        return
+    sensor_ids = [s["sensor"] for s in view.sensors]
+    profile_cost = profile_downtime_cost(view.profile)
+    with st.form("report"):
+        st.write("Koszty (zostaw 0, jeśli nieznane: wtedy termin wynika tylko z ryzyka awarii).")
+        a, b, c = st.columns(3)
+        downtime = a.number_input("Koszt godziny postoju", 0.0, value=float(profile_cost or 0.0))
+        service_cost = b.number_input("Koszt planowego serwisu (części, robocizna)", 0.0, value=0.0)
+        extra = c.number_input("Dodatkowy koszt awarii (zniszczenia, części)", 0.0, value=0.0)
+        d, e, f = st.columns(3)
+        planned_h = d.number_input("Postój planowego serwisu [h]", 0.0, value=4.0)
+        unplanned_h = e.number_input("Postój po awarii [h]", 0.0, value=24.0)
+        lead = f.number_input("Najwcześniejszy start serwisu [h]", 0.0, value=24.0)
+        g, h = st.columns(2)
+        risk = g.slider("Akceptowane ryzyko awarii przed serwisem", 1, 50, 10, format="%d%%")
+        excluded = h.multiselect(
+            "Pomiń czujniki",
+            sensor_ids,
+            default=[x for x in sensor_ids if x == "load_pct"],
+            key="report_excluded",
+        )
+        use_llm = st.checkbox(
+            "Użyj modelu językowego (dokumentacja i podsumowanie; wymaga serwera modelu)"
+        )
+        go = st.form_submit_button("Przygotuj zalecenia i raport", type="primary")
+    key = f"run:{machine_id}"
+    if go:
+        costs = CostModel(
+            downtime_cost_per_hour=downtime or None,
+            planned_downtime_h=planned_h,
+            unplanned_downtime_h=unplanned_h,
+            planned_service_cost=service_cost,
+            unplanned_extra_cost=extra,
+            lead_time_h=lead,
+        )
+        try:
+            with st.spinner("Liczę analizę, zalecenia i raport…"):
+                st.session_state[key] = service.make_report(
+                    settings,
+                    machine_id,
+                    exclude_sensors=tuple(excluded),
+                    risk_tolerance=risk / 100,
+                    costs=costs,
+                    use_llm=use_llm,
+                )
+        except (PrescriptionError, ValueError) as exc:
+            st.error(str(exc))
+    run = st.session_state.get(key)
+    if run is None:
+        return
+    _show_run(settings, machine_id, run)
+
+
+def _show_run(settings, machine_id: str, run) -> None:
+    st.markdown("### Zalecenia")
+    if run.prescription is None:
+        st.info(run.step("prescription").detail or "Brak zaleceń.")
+    else:
+        rec = run.prescription.recommendation
+        for i, action in enumerate(rec.actions, start=1):
+            due = f" (do {action.due_by:%Y-%m-%d %H:%M} UTC)" if action.due_by else ""
+            cost = f", oczekiwany koszt {action.expected_cost:.0f}" if action.expected_cost else ""
+            st.markdown(f"**{i}.** [{action.risk}] {action.description}{due}{cost}")
+        for warning in run.prescription.warnings:
+            st.warning(warning)
+        st.caption("Źródła: " + ", ".join(dict.fromkeys(s.ref for s in rec.sources)))
+        _decision_form(settings, machine_id, run)
+    st.markdown("### Decyzje nadzorcy")
+    decisions = service.decision_log(settings, machine_id)
+    if decisions:
+        rows = [
+            {
+                "kiedy": d.decided_at,
+                "kto": d.decided_by,
+                "decyzja": VERDICTS[d.verdict],
+                "działanie": d.modified_description or d.action.description,
+                "uzasadnienie": d.comment,
+            }
+            for d in decisions
+        ]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    else:
+        st.caption("Brak decyzji.")
+    st.markdown("### Raport")
+    st.download_button(
+        "Pobierz raport (Markdown)",
+        run.report.encode("utf-8"),
+        file_name=f"raport_{machine_id}_{run.run_id}.md",
+        mime="text/markdown",
+    )
+    if run.report_dir is not None:
+        st.caption(f"Zapisano w {run.report_dir}")
+    with st.expander("Podgląd raportu", expanded=False):
+        st.markdown(run.report)
+    with st.expander("Przebieg kroków"):
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "krok": s.step,
+                        "status": s.status,
+                        "czas [s]": round(s.seconds, 1),
+                        "szczegóły": s.detail,
+                    }
+                    for s in run.steps
+                ]
+            ),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+
+def _decision_form(settings, machine_id: str, run) -> None:
+    actions = run.prescription.recommendation.actions
+    st.markdown("#### Twoja decyzja")
+    with st.form("decision", clear_on_submit=True):
+        index = st.selectbox(
+            "Działanie",
+            range(len(actions)),
+            format_func=lambda i: f"{i + 1}. {actions[i].description[:90]}",
+        )
+        verdict = st.radio("Decyzja", list(VERDICTS), format_func=VERDICTS.get, horizontal=True)
+        who = st.text_input("Kto decyduje (imię lub inicjały)")
+        comment = st.text_area("Uzasadnienie (wymagane przy odrzuceniu i zmianie)", height=70)
+        changed = st.text_input("Co zamiast tego (tylko przy zmianie)")
+        if st.form_submit_button("Zapisz decyzję"):
+            try:
+                service.decide(
+                    settings,
+                    run,
+                    index,
+                    verdict,
+                    decided_by=who,
+                    comment=comment,
+                    modified_description=changed or None,
+                )
+                st.success("Decyzja zapisana, raport odświeżony.")
+            except (DecisionError, ValueError) as exc:
+                st.error(str(exc))
 
 
 main()

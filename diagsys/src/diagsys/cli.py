@@ -1,6 +1,6 @@
 """Command line interface: doctor, machine, simulate, ingest, ingest-events, data summary,
 quality, clean, features, import-xlsx, xlsx-template, diagnose, experiment-diagnosis, predict,
-experiment-prediction, llm check, docs index/search/ask, ui."""
+experiment-prediction, prescribe, llm check, docs index/search/ask, ui."""
 
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,12 +51,16 @@ from .storage import DuckDBStorage
 from .tools import (
     METHODS,
     RUL_METHODS,
+    CostModel,
     DiagnosisError,
     PredictionError,
+    PrescriptionError,
     build_dataset,
     diagnose,
     fit_model,
     forecast_latest,
+    prescribe,
+    profile_downtime_cost,
     to_anomaly_report,
 )
 
@@ -654,6 +658,63 @@ def predict_command(
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"forecast_{method}.json"
     path.write_text(f.model_dump_json(indent=2), encoding="utf-8")
+    typer.echo(f"Saved: {path}")
+
+
+@app.command("prescribe")
+def prescribe_command(
+    machine_id: str = typer.Argument(...),
+    method: str = typer.Option(
+        "quantile_gbm_cal", help=f"Forecast method: {', '.join(RUL_METHODS)}"
+    ),
+    risk: float = typer.Option(0.10, help="Accepted probability of failing before the service"),
+    downtime_cost: float = typer.Option(
+        None, help="Cost per hour of stoppage (default: from the machine's failure modes)"
+    ),
+    planned_downtime_h: float = typer.Option(4.0, help="Stop for a planned service, hours"),
+    unplanned_downtime_h: float = typer.Option(24.0, help="Stop after a failure, hours"),
+    service_cost: float = typer.Option(0.0, help="Parts and labour of a planned service"),
+    failure_extra_cost: float = typer.Option(0.0, help="Extra cost of a failure (damage, parts)"),
+    lead_time_h: float = typer.Option(24.0, help="Earliest start of a planned service, hours"),
+    exclude_sensor: list[str] = typer.Option(None, "--exclude-sensor"),
+    seed: int = typer.Option(42),
+) -> None:
+    """When to service: timing from the forecast, the failure risk and (if known) the costs."""
+    settings = load_settings()
+    try:
+        profile, storage, features = _features_for(settings, machine_id, 3600.0, 600.0)
+        with storage:
+            failures = [e.timestamp for e in storage.read_events(machine_id)]
+        ds = build_dataset(features, failures, exclude_sensors=tuple(exclude_sensor or ()))
+        model = fit_model(method, ds, seed=seed)
+        forecast = forecast_latest(model, ds, machine_id)
+        costs = CostModel(
+            downtime_cost_per_hour=downtime_cost or profile_downtime_cost(profile),
+            planned_downtime_h=planned_downtime_h,
+            unplanned_downtime_h=unplanned_downtime_h,
+            planned_service_cost=service_cost,
+            unplanned_extra_cost=failure_extra_cost,
+            lead_time_h=lead_time_h,
+        )
+        result = prescribe(forecast, costs, risk_tolerance=risk)
+    except (MachineError, FrameError, FeatureError, PredictionError, PrescriptionError) as exc:
+        raise _fail(exc) from exc
+    f = forecast.forecast
+    typer.echo(f"Prescription for {machine_id} as of {result.as_of:%Y-%m-%d %H:%M} UTC")
+    typer.echo(
+        f"  forecast: {f.rul_hours:.0f} h (80% interval {f.rul_low_hours:.0f} to "
+        f"{f.rul_high_hours:.0f} h), {method}"
+    )
+    for i, action in enumerate(result.recommendation.actions, start=1):
+        cost = f", expected cost {action.expected_cost:.0f}" if action.expected_cost else ""
+        typer.echo(f"  {i}. [{action.risk}] {action.description}{cost}")
+    typer.echo(f"  basis: {result.basis}; risk tolerance {risk:.0%}")
+    for warning in result.warnings:
+        typer.echo(f"  WARNING: {warning}")
+    out = machine_dir(settings, machine_id) / "processed"
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "prescription.json"
+    path.write_text(result.recommendation.model_dump_json(indent=2), encoding="utf-8")
     typer.echo(f"Saved: {path}")
 
 
