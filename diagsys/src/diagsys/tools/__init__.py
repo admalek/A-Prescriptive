@@ -50,6 +50,14 @@ from .prescription import (  # noqa: E402
     PrescriptionError,
     ServiceOption,
     prescribe,
+    profile_downtime_cost,
 )
 
-__all__ += ["CostModel", "Prescription", "PrescriptionError", "ServiceOption", "prescribe"]
+__all__ += [
+    "CostModel",
+    "Prescription",
+    "PrescriptionError",
+    "ServiceOption",
+    "prescribe",
+    "profile_downtime_cost",
+]

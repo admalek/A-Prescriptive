@@ -98,6 +98,12 @@ class Prescription:
     warnings: list[str] = field(default_factory=list)
 
 
+def profile_downtime_cost(profile) -> float | None:
+    """The machine's downtime cost: the highest one among its described failure modes."""
+    costs = [m.downtime_cost_per_hour for m in profile.failure_modes if m.downtime_cost_per_hour]
+    return max(costs) if costs else None
+
+
 def prescribe(
     result: ForecastResult,
     costs: CostModel | None = None,

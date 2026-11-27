@@ -9,6 +9,7 @@ never sees the cycle's own failure):
   predictive(r)       the risk rule: at the first window where the forecast puts the probability of
                       failing within the lead time at r or more, order a service, which starts
                       `lead_h` later; a failure before it starts counts as a failure
+  hybrid(f, r)        whichever comes first: the fixed-age service or the predictive one
   oracle              service exactly at the end of life (unreachable, shows the headroom)
 
 A cycle ends either in a failure (cost `ratio`) or in a planned service (cost 1), in units of one
@@ -68,23 +69,23 @@ def replay_cycles(
         others = [life[o] for o in cycles if o != c]
         out.append(CycleOutcome("run_to_failure", True, float("nan"), L))
         out.append(CycleOutcome("oracle", False, L, L))
-        for f in fixed_fractions:
-            if others:
-                t = f * float(np.median(others))
-                out.append(_serviced_at(f"fixed_age({f:g})", t, L))
+        fixed = {f: f * float(np.median(others)) for f in fixed_fractions if others}
+        for f, t in fixed.items():
+            out.append(_serviced_at(f"fixed_age({f:g})", t, L))
         for name, preds in forecasts.items():
             p = failure_probability(preds[rows], lead_h)
             for r in risks:
                 hit = np.flatnonzero(p >= r)
-                if hit.size == 0:
-                    out.append(CycleOutcome(f"{name}(r={r:g})", True, float("nan"), L))
-                else:
-                    out.append(_serviced_at(f"{name}(r={r:g})", float(age[hit[0]]) + lead_h, L))
+                start = float(age[hit[0]]) + lead_h if hit.size else float("inf")
+                out.append(_serviced_at(f"{name}(r={r:g})", start, L))
+                for f, t in fixed.items():
+                    if f >= 0.8:  # a fixed-age fallback that is not itself very early
+                        out.append(_serviced_at(f"hybrid({f:g},{name},r={r:g})", min(start, t), L))
     return out
 
 
 def _serviced_at(policy: str, start_age_h: float, life_h: float) -> CycleOutcome:
-    if start_age_h >= life_h:  # the machine failed before the service started
+    if start_age_h >= life_h:  # no service was ordered, or it started after the failure
         return CycleOutcome(policy, True, float("nan"), life_h)
     return CycleOutcome(policy, False, start_age_h, life_h)
 

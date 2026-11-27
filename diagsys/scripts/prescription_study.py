@@ -43,13 +43,13 @@ def main() -> None:
         scores = score_policies(outcomes, ratio)
         result[str(ratio)] = [asdict(s) for s in scores]
         print(f"\nfailure costs {ratio:g}x a planned service, lead time {args.lead_h:g} h")
-        print(f"{'policy':<28}{'cycles':>7}{'failed':>8}{'cost':>7}{'unused':>8}{'per 1000h':>11}")
+        print(f"{'policy':<38}{'cycles':>7}{'failed':>8}{'cost':>7}{'unused':>8}{'per 1000h':>11}")
         for s in scores:
             unused = (
                 f"{s.unused_life_share:.0%}" if s.unused_life_share == s.unused_life_share else "-"
             )
             print(
-                f"{s.policy:<28}{s.cycles:>7}{s.failure_share:>8.0%}{s.mean_cost:>7.2f}"
+                f"{s.policy:<38}{s.cycles:>7}{s.failure_share:>8.0%}{s.mean_cost:>7.2f}"
                 f"{unused:>8}{s.cost_per_1000h:>11.2f}"
             )
     if args.json:

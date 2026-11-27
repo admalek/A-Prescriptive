@@ -60,6 +60,7 @@ from .tools import (
     fit_model,
     forecast_latest,
     prescribe,
+    profile_downtime_cost,
     to_anomaly_report,
 )
 
@@ -688,7 +689,7 @@ def prescribe_command(
         model = fit_model(method, ds, seed=seed)
         forecast = forecast_latest(model, ds, machine_id)
         costs = CostModel(
-            downtime_cost_per_hour=downtime_cost or _profile_downtime_cost(profile),
+            downtime_cost_per_hour=downtime_cost or profile_downtime_cost(profile),
             planned_downtime_h=planned_downtime_h,
             unplanned_downtime_h=unplanned_downtime_h,
             planned_service_cost=service_cost,
@@ -715,12 +716,6 @@ def prescribe_command(
     path = out / "prescription.json"
     path.write_text(result.recommendation.model_dump_json(indent=2), encoding="utf-8")
     typer.echo(f"Saved: {path}")
-
-
-def _profile_downtime_cost(profile) -> float | None:
-    """The machine's downtime cost: the highest one among its described failure modes."""
-    costs = [m.downtime_cost_per_hour for m in profile.failure_modes if m.downtime_cost_per_hour]
-    return max(costs) if costs else None
 
 
 @app.command("experiment-prediction")
