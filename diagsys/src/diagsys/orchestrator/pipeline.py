@@ -65,6 +65,7 @@ class PipelineRun:
     report: str
     report_dir: Path | None
     decisions: list[Decision] = field(default_factory=list)
+    data: ReportData | None = None  # what the report was built from
 
     def step(self, name: str) -> StepRecord:
         return next(s for s in self.steps if s.step == name)
@@ -200,8 +201,22 @@ def run_pipeline(
         else None
     )
     return PipelineRun(
-        run_id, machine_id, steps, analysis, prescription, guidance, report, directory, decisions
-    )
+        run_id, machine_id, steps, analysis, prescription, guidance, report, directory, decisions,
+        data,
+    )  # fmt: skip
+
+
+def refresh_report(settings: Settings, run: PipelineRun) -> str:
+    """Rebuild the report with the decisions made since the run (and rewrite the saved file)."""
+    if run.data is None:
+        return run.report
+    if run.prescription is not None:
+        run.decisions = decisions_for(settings, run.machine_id, run.prescription.recommendation)
+        run.data.decisions = run.decisions
+    run.report = build_report(run.data)
+    if run.report_dir is not None:
+        (run.report_dir / "report.md").write_text(run.report, encoding="utf-8")
+    return run.report
 
 
 def _symptom_sensors(analysis: Analysis, limit: int = 4) -> list[str]:

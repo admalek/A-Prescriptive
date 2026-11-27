@@ -28,6 +28,7 @@ from ..data import (
     ingest_events,
     ingest_file,
 )
+from ..decisions import Decision, Verdict, list_decisions, record_decision
 from ..llm import LLMError, OpenAICompatClient
 from ..machines import (
     MachineError,
@@ -38,10 +39,12 @@ from ..machines import (
     load_machine,
     machine_dir,
 )
+from ..orchestrator import PipelineOptions, PipelineRun, refresh_report, run_pipeline
 from ..rag import RagError, answer_question, index_machine, make_embedder, search_machine
 from ..rag.answer import Answer
 from ..rag.loaders import MAX_FILE_BYTES, SUPPORTED
 from ..storage import DuckDBStorage
+from ..tools import CostModel
 
 MAX_DATA_BYTES = 1024 * 1024 * 1024
 ROLES = ("auto", "readings", "failures")  # how a CSV/Parquet file is understood
@@ -283,3 +286,57 @@ def search_docs(settings: Settings, machine_id: str, query: str, k: int = 5) -> 
 def ask_docs(settings: Settings, machine_id: str, question: str, k: int = 5) -> Answer:
     passages = search_docs(settings, machine_id, question, k)
     return answer_question(OpenAICompatClient.from_settings(settings), question, passages)
+
+
+# --- recommendations, decisions, report ---------------------------------------------------------
+
+
+def make_report(
+    settings: Settings,
+    machine_id: str,
+    *,
+    exclude_sensors: tuple[str, ...] = (),
+    horizon_h: float = 72.0,
+    risk_tolerance: float = 0.10,
+    costs: CostModel | None = None,
+    use_llm: bool = False,
+) -> PipelineRun:
+    """The whole chain for one machine: analysis, prescription, report (saved to reports/)."""
+    options = PipelineOptions(
+        exclude_sensors=exclude_sensors,
+        horizon_h=horizon_h,
+        risk_tolerance=risk_tolerance,
+        costs=costs,
+        use_llm=use_llm,
+    )
+    return run_pipeline(settings, machine_id, options)
+
+
+def decide(
+    settings: Settings,
+    run: PipelineRun,
+    action_index: int,
+    verdict: Verdict,
+    *,
+    decided_by: str,
+    comment: str = "",
+    modified_description: str | None = None,
+) -> Decision:
+    """Record the supervisor's decision on one action and refresh the report with it."""
+    if run.prescription is None:
+        raise ValueError("there is no recommendation to decide on")
+    decision = record_decision(
+        settings,
+        run.prescription.recommendation,
+        action_index,
+        verdict,
+        decided_by=decided_by,
+        comment=comment,
+        modified_description=modified_description,
+    )
+    refresh_report(settings, run)
+    return decision
+
+
+def decision_log(settings: Settings, machine_id: str) -> list[Decision]:
+    return list_decisions(settings, machine_id)

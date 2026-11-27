@@ -7,6 +7,7 @@ from .pipeline import (
     StepRecord,
     decisions_for,
     default_costs,
+    refresh_report,
     run_pipeline,
 )
 
@@ -16,5 +17,6 @@ __all__ = [
     "StepRecord",
     "decisions_for",
     "default_costs",
+    "refresh_report",
     "run_pipeline",
 ]

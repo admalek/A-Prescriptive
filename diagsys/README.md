@@ -173,6 +173,33 @@ poprawnego źródła jest oznaczona ostrzeżeniem, a przy braku fragmentów mode
 wywoływany. Uruchomienie Bielika (Ollama, llama.cpp), wybór embeddingów i ograniczenia:
 `docs/modele.md`.
 
+## Preskrypcja (K7)
+
+```bash
+uv run diagsys prescribe pompa-01 --downtime-cost 1000 --service-cost 2000 --lead-time-h 24
+uv run python scripts/prescription_study.py --seeds 1-10     # porównanie polityk serwisowych
+```
+
+Z prognozy RUL (rozkład z pięciu kwantyli) i kosztów liczy termin planowego serwisu. Dwie reguły,
+obie widoczne w wyniku: **reguła ryzyka** (nie czekać dłużej niż do chwili, gdy prawdopodobieństwo
+awarii osiągnie akceptowane, domyślnie 10%) i **reguła kosztu** (najniższy oczekiwany koszt na
+godzinę pracy, tylko gdy koszty są znane). Zalecany start to wcześniejszy z nich, nie wcześniej niż
+po czasie potrzebnym na organizację serwisu. Bez kosztów działa tylko reguła ryzyka i wynik to
+mówi. Wynik to lista działań z ryzykiem, oczekiwanym kosztem i źródłami (`processed/prescription.json`).
+Wskazówki z dokumentacji maszyny (RAG + model, odpowiedź bez źródła jest odrzucana) są opcjonalne.
+Ocena na symulatorze: `docs/wyniki_k7.md`.
+
+## Raport, decyzje, pipeline (K8)
+
+`run_pipeline` (`orchestrator/pipeline.py`) wykonuje kroki: analiza (dane, diagnoza, prognoza),
+wskazówki z dokumentacji, preskrypcja, podsumowanie, raport. Każdy krok zapisuje status, czas i
+źródła (`reports/<czas>/trace.json`), a awaria kroku nie zatrzymuje niezależnych. Części
+z modelem językowym są przełącznikami, więc ten sam przebieg można powtórzyć bez modelu lub bez
+dokumentacji (ablacje). Podsumowanie napisane przez model jest przyjmowane tylko, gdy każda liczba
+w nim występuje w wynikach narzędzi; w przeciwnym razie raport używa podsumowania standardowego i
+zapisuje powód odrzucenia. Decyzje nadzorcy (zatwierdzone, odrzucone, zmienione) trafiają do
+dziennika `reports/decisions.jsonl` razem z kopią działania i skrótem całej rekomendacji.
+
 ## Okno nadzorcy
 
 ```bash
@@ -185,10 +212,11 @@ jako odczyty albo historia awarii, dokumentacja `.txt`/`.md`/`.pdf`/`.docx`; wyn
 każdego pliku w tabeli, błędny plik nie zatrzymuje reszty) i **Wyniki** (dla maszyny wybranej w
 panelu bocznym: co jest zapisane, prognoza z przedziałem i ostrzeżeniami, diagnoza obiema metodami
 z wykresem wyniku i awariami, wyszukiwanie i pytania do dokumentacji). Maszynę tworzysz w panelu
-bocznym. Prognoza używa najlepszej metody, na jaką pozwala historia (3 cykle: `quantile_gbm_cal`,
+bocznym. Trzecia zakładka, **Zalecenia i raport**, liczy zalecenia (koszty wpisujesz lub zostawiasz
+0), pozwala zatwierdzić, odrzucić lub zmienić każde działanie (z imieniem i uzasadnieniem) i daje
+raport do pobrania. Prognoza używa najlepszej metody, na jaką pozwala historia (3 cykle: `quantile_gbm_cal`,
 2: `quantile_gbm`, 1: `age_baseline`, 0: brak prognozy z komunikatem). Logika jest w
 `src/diagsys/ui/service.py` (testowana bez przeglądarki), strona w `ui/app.py`. To jeszcze nie
-zatwierdzanie sugestii przez nadzorcę (K8): okno pokazuje wyniki, nic nie zatwierdza.
 
 ## Struktura
 
@@ -219,6 +247,6 @@ tests/
 | K4 | Diagnoza: anomalie, epizody alarmów, czujniki-sprawcy | zrobiony, wzorzec odniesienia stały (hipotezy przyczyn: później) |
 | K5 | Predykcja (RUL) z przedziałem, punkt odniesienia, ocena | zrobiony, z kalibracją przedziałów |
 | K6 | Serwer modeli (Bielik) i RAG per maszyna | zrobiony (z modelem testowany tylko na atrapie serwera) |
-| K7 | Preskrypcja | |
-| K8 | Orkiestrator, raport, kontrola, interfejs | |
+| K7 | Preskrypcja | zrobiony (ocena na symulatorze: `docs/wyniki_k7.md`) |
+| K8 | Orkiestrator, raport, kontrola, interfejs | zrobiony w wersji deterministycznej (planista sterowany modelem: następny eksperyment) |
 | K9-K11 | Ewaluacja, utwardzenie, pilot | |

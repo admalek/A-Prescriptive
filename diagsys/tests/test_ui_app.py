@@ -41,3 +41,31 @@ def test_first_run_asks_for_a_machine_then_adds_files_and_shows_results(monkeypa
     assert not at.exception, at.exception
     labels = [m.label for m in at.metric]
     assert "Mediana pozostałego czasu" in labels
+
+
+def test_report_tab_recommends_and_records_a_decision(monkeypatch, tmp_path):
+    at = _app(monkeypatch, tmp_path).run()
+    at.sidebar.text_input[0].set_value("sim-01")
+    at.sidebar.button[0].click()
+    at = at.run()
+    sim = run_simulation(SimConfig(cycles=4, sampling_s=300, seed=7), "sim-01")
+    write_simulation(sim, tmp_path / "r.csv", tmp_path / "f.csv")
+    at.text_area[0].set_value(f"{tmp_path / 'r.csv'}\n{tmp_path / 'f.csv'}")
+    at.button[0].click()
+    at = at.run()
+
+    next(b for b in at.button if b.label == "Przygotuj zalecenia i raport").click()
+    at = at.run()
+    assert not at.exception, at.exception
+    assert any("Zalecenia" in m.value for m in at.markdown)
+    assert any("Brak decyzji" in c.value for c in at.caption)
+
+    # an empty name is refused, a proper decision is stored and shows up in the log
+    next(b for b in at.button if b.label == "Zapisz decyzję").click()
+    at = at.run()
+    assert any("who decides" in e.value for e in at.error)
+    next(t for t in at.text_input if t.label.startswith("Kto decyduje")).set_value("AM")
+    next(b for b in at.button if b.label == "Zapisz decyzję").click()
+    at = at.run()
+    assert not at.exception and any("Decyzja zapisana" in s.value for s in at.success)
+    assert at.dataframe[-2].value["decyzja"].tolist() == ["Zatwierdzam"]
